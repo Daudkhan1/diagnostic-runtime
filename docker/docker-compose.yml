@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:latest
+    container_name: mongo_container
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    ports:
+      - 27017:27017
+    networks:
+      - default
+    healthcheck:
+      test: echo "try { rs.status() } catch (err) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}) }" | mongosh --port 27017 --quiet &&
+        mongorestore /dump
+      interval: 5s
+      timeout: 30s
+      start_period: 0s
+      retries: 30
+    volumes:
+      - "mongo_data:/data/db"
+      - "mongo_config:/data/configdb"
+      - "./dump:/dump"  # Mount the dump folder containing the BSON data
+
+  springboot-app:
+    build:
+      context: ..                         # Path to the directory containing the Dockerfile
+      dockerfile: Dockerfile             # Dockerfile for the Spring Boot app
+    image: 831926608672.dkr.ecr.ap-south-1.amazonaws.com/diagnostic-runtime:latest                # Specify an image name for reuse
+    container_name: springboot_container
+    networks:
+      - default
+    depends_on:
+      - mongo
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/diagnostics?replicaSet=rs0&retryWrites=true&connectTimeoutMS=30000&socketTimeoutMS=30000&retryWrites=true
+      SPRING_PROFILES_ACTIVE: without-ai-annotation
+      ANONYMIZER_SERVICE_URL: http://diagnostic-anonymizer:8001
+    ports:
+      - 8080:8080
+
+#Here i have skipped the running the diagnostic-anonymizer image because this image is already building through DiagnosticAnonymizer repository.
+
+
+networks:
+  default:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  mongo_config:
+  
