@@ -4,11 +4,12 @@ on:
   push:
     branches:
       - development
-      - prod
+      - main
 
 jobs:
   push-image:
     name: Push Docker Image
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development'
     runs-on: ubuntu-latest
 
     steps:
@@ -20,83 +21,86 @@ jobs:
       - name: Configure AWS CLI
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AMAZON_S3_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AMAZON_S3_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AMAZON_S3_REGION_NAME }}
 
       - name: Build Docker Image
         run: |
-          if [ "${{ github.ref }}" == "refs/heads/prod" ]; then
-            docker build -t diagnostic-runtime:latest .
-            docker save -o diagnostic-runtime.tar diagnostic-runtime:latest
-            aws s3 cp diagnostic-runtime.tar s3://diagnostic-images-bucket/diagnostic-runtime.tar
+          # Login to Amazon ECR
+          aws ecr get-login-password --region ${{ secrets.AMAZON_S3_REGION_NAME }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com
+
+
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            docker build --build-arg BUILD_ENV=production -t 831926608672.dkr.ecr.ap-south-1.amazonaws.com/diagnostic-runtime:latest .
+            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com/diagnostic-runtime:latest
           elif [ "${{ github.ref }}" == "refs/heads/development" ]; then
-            docker build -t diagnostic-runtime-test:latest .
-            docker save -o diagnostic-runtime-test.tar diagnostic-runtime-test:latest
-            aws s3 cp diagnostic-runtime-test.tar s3://diagnostic-images-bucket/diagnostic-runtime-test.tar
+            docker build --build-arg BUILD_ENV=development -t 831926608672.dkr.ecr.ap-south-1.amazonaws.com/diagnostic-runtime:dev .
+            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com/diagnostic-runtime:dev
           fi
+
       - name: Trigger Deployment in Second Repository
         run: |
           echo "${{ github.ref }}"
           RESPONSE=$(curl -X POST -H "Authorization: token ${{ secrets.DISPATCH_ACCESS_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/repos/Maanz-AI-Pvt-Ltd/DiagnosticDeployment/dispatches \
-          -d '{"event_type": "web-trigger", "client_payload": { "branch": "${{ github.ref }}" }}')
-          
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/Daudkhan1/diagnostic-deployment/dispatches \
+            -d '{"event_type": "web-trigger", "client_payload": { "branch": "${{ github.ref }}" }}')
+
           # Wait a moment for the workflow to be created
           sleep 10
-          
+
           # Get the workflow run ID with retries
           MAX_RETRIES=5
           RETRY_COUNT=0
           WORKFLOW_RUN_ID=""
-          
+
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-          # Get all recent workflow runs and find the one that was just triggered
-          WORKFLOW_RUN_ID=$(curl -s -H "Authorization: token ${{ secrets.DISPATCH_ACCESS_TOKEN }}" \
-           -H "Accept: application/vnd.github.v3+json" \
-           "https://api.github.com/repos/Maanz-AI-Pvt-Ltd/DiagnosticDeployment/actions/runs?per_page=5" | \
-           jq -r '.workflow_runs[] | select(.name == "Deploy to EC2 using AWS CLI" and .event == "repository_dispatch" and .status == "in_progress") | .id' | head -n 1)
-          
-          if [ "$WORKFLOW_RUN_ID" != "null" ] && [ ! -z "$WORKFLOW_RUN_ID" ]; then
-           break
-          fi
-          
-          echo "Workflow run ID not found yet, retrying in 5 seconds..."
-          sleep 5
-          RETRY_COUNT=$((RETRY_COUNT+1))
+            # Get all recent workflow runs and find the one that was just triggered
+            WORKFLOW_RUN_ID=$(curl -s -H "Authorization: token ${{ secrets.DISPATCH_ACCESS_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/Daudkhan1/diagnostic-deployment/actions/runs?per_page=5" | \
+              jq -r '.workflow_runs[] | select(.name == "Deploy to EC2 using AWS CLI" and .event == "repository_dispatch" and .status == "in_progress") | .id' | head -n 1)
+
+            if [ "$WORKFLOW_RUN_ID" != "null" ] && [ ! -z "$WORKFLOW_RUN_ID" ]; then
+              break
+            fi
+
+            echo "Workflow run ID not found yet, retrying in 5 seconds..."
+            sleep 5
+            RETRY_COUNT=$((RETRY_COUNT+1))
           done
-          
+
           if [ "$WORKFLOW_RUN_ID" = "null" ] || [ -z "$WORKFLOW_RUN_ID" ]; then
-          echo "Failed to get workflow run ID after $MAX_RETRIES attempts"
-          exit 1
+            echo "Failed to get workflow run ID after $MAX_RETRIES attempts"
+            exit 1
           fi
-          
+
           echo "Triggered workflow run ID: $WORKFLOW_RUN_ID"
           echo "WORKFLOW_RUN_ID=$WORKFLOW_RUN_ID" >> $GITHUB_ENV
 
       - name: Wait for Deployment in Second Repository
         run: |
           echo "Waiting for deployment to complete..."
-          REPO="Maanz-AI-Pvt-Ltd/DiagnosticDeployment"
+          REPO="Daudkhan1/diagnostic-deployment"
           MAX_ATTEMPTS=30
           INTERVAL=10
           ATTEMPT=0
-          
+
           while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
             echo "Checking workflow status... Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS"
-          
+
             # Get the full workflow run details
             WORKFLOW_STATUS=$(curl -s -H "Authorization: token ${{ secrets.DISPATCH_ACCESS_TOKEN }}" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$REPO/actions/runs/${{ env.WORKFLOW_RUN_ID }}" | \
               jq -r '.status')
-          
+
             WORKFLOW_CONCLUSION=$(curl -s -H "Authorization: token ${{ secrets.DISPATCH_ACCESS_TOKEN }}" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$REPO/actions/runs/${{ env.WORKFLOW_RUN_ID }}" | \
               jq -r '.conclusion')
-          
+
             if [[ "$WORKFLOW_STATUS" == "completed" ]]; then
               if [[ "$WORKFLOW_CONCLUSION" == "success" ]]; then
                 echo "Deployment succeeded in second repository!"
@@ -106,95 +110,95 @@ jobs:
                 exit 1
               fi
             fi
-          
+
             echo "Still running... waiting $INTERVAL seconds before retrying."
             sleep $INTERVAL
             ATTEMPT=$((ATTEMPT+1))
           done
-          
+
           echo "Timeout reached! Deployment status unknown."
           exit 1
 
-  notify-teams:
-    name: Notify Teams
-    needs: [ push-image ]
-    if: always()  # This ensures the job runs regardless of success or failure
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send Teams Notification
-        run: |
-          # Determine status and color
-          if [ "${{ job.status }}" == "success" ]; then
-            THEME_COLOR="2DC72D"  # Green
-            EMOJI="✅"
-            TITLE="Deployment Successful"
-          else
-            THEME_COLOR="E81123"  # Red
-            EMOJI="🚨"
-            TITLE="Deployment Failed"
-          fi
+  # notify-teams:
+  #   name: Notify Teams
+  #   needs: [ push-image ]
+  #   if: always()  # This ensures the job runs regardless of success or failure
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Send Teams Notification
+  #       run: |
+  #         # Determine status and color
+  #         if [ "${{ job.status }}" == "success" ]; then
+  #           THEME_COLOR="2DC72D"  # Green
+  #           EMOJI="✅"
+  #           TITLE="Deployment Successful"
+  #         else
+  #           THEME_COLOR="E81123"  # Red
+  #           EMOJI="🚨"
+  #           TITLE="Deployment Failed"
+  #         fi
 
-          # Get the failed job name if any
-          FAILED_JOB=""
-          if [ "${{ needs.push-image.result }}" == "failure" ]; then
-            FAILED_JOB="Push Image"
-          elif [ "${{ needs.deploy.result }}" == "failure" ]; then
-            FAILED_JOB="Deploy"
-          fi
+  #         # Get the failed job name if any
+  #         FAILED_JOB=""
+  #         if [ "${{ needs.push-image.result }}" == "failure" ]; then
+  #           FAILED_JOB="Push Image"
+  #         elif [ "${{ needs.deploy.result }}" == "failure" ]; then
+  #           FAILED_JOB="Deploy"
+  #         fi
 
-          # Create the JSON payload
-          PAYLOAD="{
-            \"type\": \"message\",
-            \"attachments\": [
-              {
-                \"contentType\": \"application/vnd.microsoft.card.adaptive\",
-                \"content\": {
-                  \"type\": \"AdaptiveCard\",
-                  \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",
-                  \"version\": \"1.2\",
-                  \"body\": [
-                    {
-                      \"type\": \"TextBlock\",
-                      \"text\": \"$EMOJI $TITLE\",
-                      \"weight\": \"bolder\",
-                      \"size\": \"large\"
-                    },
-                    {
-                      \"type\": \"FactSet\",
-                      \"facts\": [
-                        {
-                          \"title\": \"Repository\",
-                          \"value\": \"${{ github.repository }}\"
-                        },
-                        {
-                          \"title\": \"Branch\",
-                          \"value\": \"${{ github.ref_name }}\"
-                        },
-                        {
-                          \"title\": \"Run ID\",
-                          \"value\": \"${{ github.run_id }}\"
-                        }
-                      ]
-                    }
-                  ],
-                  \"actions\": [
-                    {
-                      \"type\": \"Action.OpenUrl\",
-                      \"title\": \"View Workflow Run\",
-                      \"url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
-                    }
-                  ]
-                }
-              }
-            ]
-          }"
+  #         # Create the JSON payload
+  #         PAYLOAD="{
+  #           \"type\": \"message\",
+  #           \"attachments\": [
+  #             {
+  #               \"contentType\": \"application/vnd.microsoft.card.adaptive\",
+  #               \"content\": {
+  #                 \"type\": \"AdaptiveCard\",
+  #                 \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",
+  #                 \"version\": \"1.2\",
+  #                 \"body\": [
+  #                   {
+  #                     \"type\": \"TextBlock\",
+  #                     \"text\": \"$EMOJI $TITLE\",
+  #                     \"weight\": \"bolder\",
+  #                     \"size\": \"large\"
+  #                   },
+  #                   {
+  #                     \"type\": \"FactSet\",
+  #                     \"facts\": [
+  #                       {
+  #                         \"title\": \"Repository\",
+  #                         \"value\": \"${{ github.repository }}\"
+  #                       },
+  #                       {
+  #                         \"title\": \"Branch\",
+  #                         \"value\": \"${{ github.ref_name }}\"
+  #                       },
+  #                       {
+  #                         \"title\": \"Run ID\",
+  #                         \"value\": \"${{ github.run_id }}\"
+  #                       }
+  #                     ]
+  #                   }
+  #                 ],
+  #                 \"actions\": [
+  #                   {
+  #                     \"type\": \"Action.OpenUrl\",
+  #                     \"title\": \"View Workflow Run\",
+  #                     \"url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+  #                   }
+  #                 ]
+  #               }
+  #             }
+  #           ]
+  #         }"
 
-          # Debug: Print the payload
-          echo "Payload:"
-          echo "$PAYLOAD"
+  #         # Debug: Print the payload
+  #         echo "Payload:"
+  #         echo "$PAYLOAD"
 
-          # Send the notification
-          curl -H "Content-Type: application/json" \
-               -d "$PAYLOAD" \
-               "${{ secrets.TEAMS_WEBHOOK_URL }}"
+  #         # Send the notification
+  #         curl -H "Content-Type: application/json" \
+  #              -d "$PAYLOAD" \
+  #              "${{ secrets.TEAMS_WEBHOOK_URL }}"
       
