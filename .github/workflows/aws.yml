@@ -38,7 +38,7 @@ jobs:
             docker build --build-arg BUILD_ENV=development -t 831926608672.dkr.ecr.ap-south-1.amazonaws.com/diagnostic-runtime:dev .
             docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com/diagnostic-runtime:dev
           fi
-      # trigger deploy
+      # trigger deploy.
       - name: Trigger Deployment in Second Repository
         run: |
           echo "${{ github.ref }}"
