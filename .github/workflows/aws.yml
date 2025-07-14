@@ -49,7 +49,7 @@ jobs:
           if [ "${GITHUB_REF}" == "refs/heads/main" ]; then
             docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com/diagnostic-runtime:${{ steps.vars.outputs.TAG }} .
             docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com/diagnostic-runtime:${{ steps.vars.outputs.TAG }}
-          elif [ "${GITHUB_REF}" == "refs/heads/development" ]; then
+          elif [ "${GITHUB_REF}" == "refs/heads/staging" ]; then
             docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com/diagnostic-runtime:${{ steps.vars.outputs.TAG }} .
             docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AMAZON_S3_REGION_NAME }}.amazonaws.com/diagnostic-runtime:${{ steps.vars.outputs.TAG }}
           fi
