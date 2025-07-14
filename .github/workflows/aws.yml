@@ -34,6 +34,13 @@ jobs:
             echo "TARGET_BRANCH=staging" >> $GITHUB_OUTPUT
           fi
 
+      - name: Configure AWS CLI
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AMAZON_S3_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AMAZON_S3_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AMAZON_S3_REGION_NAME }}
+
       - name: Build and Push Docker Image
         run: |
           # Login to Amazon ECR
